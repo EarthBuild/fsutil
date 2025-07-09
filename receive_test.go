@@ -117,7 +117,7 @@ func TestCopyDirectoryTimestamps(t *testing.T) {
 
 	eg.Go(func() error {
 		defer s1.(*fakeConnProto).closeSend()
-		return Send(ctx, s1, fs, nil)
+		return Send(ctx, s1, fs, nil, nil)
 	})
 	eg.Go(func() error {
 		return Receive(ctx, s2, dest, ReceiveOpt{})
