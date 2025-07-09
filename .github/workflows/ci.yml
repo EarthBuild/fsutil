@@ -102,8 +102,10 @@ jobs:
           go test ./...
 
   test-freebsd-amd64:
-    # TODO(jhorsts): macos-latest image has no vagrant anymore. Use 10.15 for now.
-    runs-on: macos-10.15
+    # TODO(jhorsts): macOS latest (v10.15) used to contain vagrant but not anymore.
+    # The comment can be removed when the latest fsutil is merged into this repo.
+    if: false 
+    runs-on: macos-latest
     timeout-minutes: 60
     env:
       VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
