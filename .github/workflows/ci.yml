@@ -9,11 +9,11 @@ on:
     - cron: '0 8 */6 * *' # every 6 days
   push:
     branches:
-      - earthly-main
+      - main
       - gh_test_ci
   pull_request:
     branches:
-      - earthly-main
+      - main
 
 jobs:
   validate:
@@ -102,6 +102,9 @@ jobs:
           go test ./...
 
   test-freebsd-amd64:
+    # TODO(jhorsts): macOS latest (v10.15) used to contain vagrant but not anymore.
+    # The comment can be removed when the latest fsutil is merged into this repo.
+    if: false 
     runs-on: macos-latest
     timeout-minutes: 60
     env:
