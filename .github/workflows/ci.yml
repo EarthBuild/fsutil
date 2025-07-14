@@ -5,15 +5,17 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 8 */6 * *' # every 6 days
   push:
     branches:
-      - earthly-main
-      - gh_test_ci
+      - master
   pull_request:
-    branches:
-      - earthly-main
+
+env:
+  DESTDIR: ./bin
+  GO_VERSION: "1.23"
 
 jobs:
   validate:
@@ -21,19 +23,16 @@ jobs:
     strategy:
       matrix:
         target:
-          - lint
+          - lint-golangci-cross
+          - lint-gopls-cross
+          - validate-generated-files
           - validate-gomod
           - validate-shfmt
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v3
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      -
-        name: Run
-        uses: docker/bake-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Run
+        uses: docker/bake-action@v6
         with:
           targets: ${{ matrix.target }}
 
@@ -45,15 +44,10 @@ jobs:
           - build
           - cross
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v3
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      -
-        name: Run
-        uses: docker/bake-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Run
+        uses: docker/bake-action@v6
         with:
           targets: ${{ matrix.target }}
 
@@ -61,66 +55,113 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go_version:
-          - "1.19"
-          - "1.20"
+        go:
+          - "1.23"
+          - "1.22"
+          - "1.21"
+        mode:
+          - "root"
+          - "noroot"
     env:
-      GO_VERSION: ${{ matrix.go_version }}
+      GO_VERSION: ${{ matrix.go }}
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v3
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      -
-        name: Test
-        uses: docker/bake-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Test
+        uses: docker/bake-action@v6
         with:
-          targets: test
+          targets: test-${{ matrix.mode }}
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        # skip the step for EarthBuild
+        if: false
+        with:
+          directory: ${{ env.DESTDIR }}/coverage
+          flags: unit,${{ matrix.mode }},go-${{ matrix.go }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-  test-macos:
-    runs-on: macos-latest
+  test-os:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - macos-latest
+          - windows-latest
         go:
-          - "1.19"
-          - "1.20"
+          - "1.23"
+          - "1.22"
+          - "1.21"
     steps:
       -
         name: Checkout
         uses: actions/checkout@v3
       -
         name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
-      -
-        name: Test
+      - name: Test
         run: |
-          go test ./...
+          go test -coverprofile="coverage.txt" -covermode="atomic" ./...
+          go tool cover -func="coverage.txt"
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.txt
+          env_vars: RUNNER_OS
+          flags: unit,go-${{ matrix.go }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-  test-freebsd-amd64:
-    runs-on: macos-latest
-    timeout-minutes: 60
-    env:
-      VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
+  test-bsd-amd64:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - freebsd
+          - netbsd
+          - openbsd
     steps:
       -
         name: Checkout
         uses: actions/checkout@v3
       -
         name: Cache Vagrant boxes
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.vagrant.d/boxes
-          key: ${{ runner.os }}-vagrant-${{ hashFiles('hack/Vagrantfile.freebsd13') }}
+          key: ${{ runner.os }}-vagrant-${{ matrix.os }}-${{ hashFiles(env.VAGRANT_FILE) }}
           restore-keys: |
-            ${{ runner.os }}-vagrant-
-      -
-        name: Set up vagrant
-        run: vagrant up
-      -
-        name: Test
-        run: vagrant ssh -- "cd /vagrant; go test -buildvcs=false ./..."
+            ${{ runner.os }}-vagrant-${{ matrix.os }}-
+      - name: Install vagrant
+        run: |
+          set -x
+          wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update
+          sudo apt-get install -y libvirt-dev libvirt-daemon libvirt-daemon-system vagrant vagrant-libvirt ruby-libvirt
+          sudo systemctl enable --now libvirtd
+          sudo chmod a+rw /var/run/libvirt/libvirt-sock
+          vagrant plugin install vagrant-libvirt
+          vagrant --version
+      - name: Set up vagrant
+        run: |
+          ln -sf ${{ env.VAGRANT_FILE }} Vagrantfile
+          vagrant up --no-tty
+      - name: Test
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+        with:
+          timeout_minutes: 20
+          max_attempts: 5
+          command: |
+            vagrant ssh -- "cd /vagrant; go test -buildvcs=false -coverprofile=coverage.txt -covermode=atomic ./..."
+            vagrant ssh -c "sudo cat /vagrant/coverage.txt" > coverage.txt
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.txt
+          flags: unit,${{ matrix.os }}
+          token: ${{ secrets.CODECOV_TOKEN }}

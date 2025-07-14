@@ -18,15 +18,6 @@ import (
 	"github.com/tonistiigi/fsutil"
 )
 
-// requiresRoot skips tests that require root
-func requiresRoot(t *testing.T) {
-	t.Helper()
-	if os.Getuid() != 0 {
-		t.Skip("skipping test that requires root")
-		return
-	}
-}
-
 // TODO: Create copy directory which requires privilege
 //  chown
 //  mknod
@@ -292,6 +283,56 @@ func TestCopyExistingDirDest(t *testing.T) {
 	require.Equal(t, "bar-contents", string(dt))
 }
 
+func TestCopyDirectoryChmodChown(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip()
+	}
+
+	t1 := t.TempDir()
+	apply := fstest.Apply(
+		fstest.CreateDir("dir", 0755),
+		fstest.CreateFile("dir/foo.txt", []byte("foo-contents"), 0644),
+		fstest.CreateDir("dir/sub2", 0755),
+	)
+	require.NoError(t, apply.Apply(t1))
+
+	t2 := t.TempDir()
+
+	mod := int(0700)
+	err := Copy(context.TODO(), t1, "dir", t2, "dest/sub", WithCopyInfo(CopyInfo{
+		CopyDirContents: true,
+		Mode:            &mod,
+	}), WithChown(100, 200))
+	require.NoError(t, err)
+
+	st, err := os.Lstat(filepath.Join(t2, "dest/sub"))
+	require.NoError(t, err)
+	uid, gid, ok := readUidGid(st)
+	if ok {
+		require.Equal(t, 100, uid)
+		require.Equal(t, 200, gid)
+	}
+	require.Equal(t, os.FileMode(0700), st.Mode()&os.ModePerm)
+
+	st, err = os.Lstat(filepath.Join(t2, "dest/sub/foo.txt"))
+	require.NoError(t, err)
+	uid, gid, ok = readUidGid(st)
+	if ok {
+		require.Equal(t, 100, uid)
+		require.Equal(t, 200, gid)
+	}
+	require.Equal(t, os.FileMode(0700), st.Mode()&os.ModePerm)
+
+	st, err = os.Lstat(filepath.Join(t2, "dest/sub/sub2"))
+	require.NoError(t, err)
+	uid, gid, ok = readUidGid(st)
+	if ok {
+		require.Equal(t, 100, uid)
+		require.Equal(t, 200, gid)
+	}
+	require.Equal(t, os.FileMode(0700), st.Mode()&os.ModePerm)
+}
+
 func TestCopyDirectoryContentsTimestamp(t *testing.T) {
 	timestamp := time.Unix(0, 0)
 	apply := fstest.Apply(
@@ -357,6 +398,60 @@ func TestCopySymlinks(t *testing.T) {
 	link, err := os.Readlink(filepath.Join(t3, "foo"))
 	require.NoError(t, err)
 	require.Equal(t, "foo.txt", link)
+}
+
+func TestCopyWithAlwaysReplaceExistingDestPaths(t *testing.T) {
+	destDir := t.TempDir()
+	require.NoError(t, fstest.Apply(
+		fstest.CreateDir("root", 0755),
+		fstest.CreateDir("root/overwritedir", 0755),
+		fstest.CreateFile("root/overwritedir/subfile", nil, 0755),
+		fstest.CreateFile("root/overwritefile", nil, 0755),
+		fstest.Symlink("dir", "root/overwritesymlink"),
+		fstest.CreateDir("root/dir", 0755),
+		fstest.CreateFile("root/dir/dirfile1", nil, 0755),
+		fstest.CreateDir("root/dir/overwritesubdir", 0755),
+		fstest.CreateFile("root/dir/overwritesubfile", nil, 0755),
+		fstest.Symlink("dirfile1", "root/dir/overwritesymlink"),
+	).Apply(destDir))
+
+	srcDir := t.TempDir()
+	require.NoError(t, fstest.Apply(
+		fstest.CreateDir("root", 0755),
+		fstest.CreateFile("root/overwritedir", nil, 0755),
+		fstest.CreateDir("root/overwritefile", 0755),
+		fstest.CreateFile("root/overwritefile/foo", nil, 0755),
+		fstest.CreateDir("root/overwritesymlink", 0755),
+		fstest.CreateDir("root/dir", 0755),
+		fstest.CreateFile("root/dir/dirfile2", nil, 0755),
+		fstest.CreateFile("root/dir/overwritesubdir", nil, 0755),
+		fstest.CreateDir("root/dir/overwritesubfile", 0755),
+		fstest.CreateDir("root/dir/overwritesymlink", 0755),
+	).Apply(srcDir))
+
+	expectedDir := t.TempDir()
+	require.NoError(t, fstest.Apply(
+		fstest.CreateDir("root", 0755),
+		fstest.CreateFile("root/overwritedir", nil, 0755),
+		fstest.CreateDir("root/overwritefile", 0755),
+		fstest.CreateFile("root/overwritefile/foo", nil, 0755),
+		fstest.CreateDir("root/overwritesymlink", 0755),
+		fstest.CreateDir("root/dir", 0755),
+		fstest.CreateFile("root/dir/dirfile1", nil, 0755),
+		fstest.CreateFile("root/dir/dirfile2", nil, 0755),
+		fstest.CreateFile("root/dir/overwritesubdir", nil, 0755),
+		fstest.CreateDir("root/dir/overwritesubfile", 0755),
+		fstest.CreateDir("root/dir/overwritesymlink", 0755),
+	).Apply(expectedDir))
+
+	err := Copy(context.TODO(), srcDir, "root", destDir, "root", WithCopyInfo(CopyInfo{
+		AlwaysReplaceExistingDestPaths: true,
+		CopyDirContents:                true,
+	}))
+	require.NoError(t, err)
+
+	err = fstest.CheckDirectoryEqual(destDir, expectedDir)
+	require.NoError(t, err)
 }
 
 func testCopy(t *testing.T, apply fstest.Applier, exp string) error {
@@ -539,6 +634,28 @@ func TestCopyIncludeExclude(t *testing.T) {
 				require.Equal(t, tc.expectedChanges, ch.String())
 			}
 		})
+	}
+}
+
+func TestCopyFileWithPathTimestamp(t *testing.T) {
+	timestamp := time.Unix(0, 0)
+	apply := fstest.Apply(
+		fstest.CreateDir("/foo/", 0755),
+		fstest.CreateFile("/foo/bar", []byte{}, 0644),
+	)
+
+	t1 := t.TempDir()
+	t2 := t.TempDir()
+
+	require.NoError(t, apply.Apply(t1))
+	require.NoError(t, Copy(context.TODO(), t1, "/foo/bar", t2, "/test1/test2/test3/bar", WithCopyInfo(CopyInfo{
+		CopyDirContents: true,
+		Utime:           &timestamp,
+	})))
+
+	for _, s := range []string{"/test1/test2/test3/bar", "/test1/test2/test3", "/test1/test2", "/test1"} {
+		stat, _ := os.Stat(filepath.Join(t2, s))
+		require.Equal(t, timestamp, stat.ModTime(), "path: %s", s)
 	}
 }
 
