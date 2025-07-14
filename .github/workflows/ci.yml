@@ -17,6 +17,7 @@ env:
   DESTDIR: ./bin
   GO_VERSION: "1.23"
 
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -114,15 +115,14 @@ jobs:
           flags: unit,go-${{ matrix.go }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  test-bsd-amd64:
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - freebsd
-          - netbsd
-          - openbsd
+  test-freebsd-amd64:
+    # TODO(jhorsts): macOS latest (v10.15) used to contain vagrant but not anymore.
+    # The comment can be removed when the latest fsutil is merged into this repo.
+    if: false 
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
     steps:
       -
         name: Checkout
