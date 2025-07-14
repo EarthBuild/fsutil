@@ -17,7 +17,6 @@ env:
   DESTDIR: ./bin
   GO_VERSION: "1.23"
 
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -30,9 +29,11 @@ jobs:
           - validate-gomod
           - validate-shfmt
     steps:
-      - name: Set up Docker Buildx
+      -
+        name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Run
+      -
+        name: Run
         uses: docker/bake-action@v6
         with:
           targets: ${{ matrix.target }}
@@ -45,9 +46,11 @@ jobs:
           - build
           - cross
     steps:
-      - name: Set up Docker Buildx
+      -
+        name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Run
+      -
+        name: Run
         uses: docker/bake-action@v6
         with:
           targets: ${{ matrix.target }}
@@ -66,13 +69,16 @@ jobs:
     env:
       GO_VERSION: ${{ matrix.go }}
     steps:
-      - name: Set up Docker Buildx
+      -
+        name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Test
+      -
+        name: Test
         uses: docker/bake-action@v6
         with:
           targets: test-${{ matrix.mode }}
-      - name: Upload coverage
+      -
+        name: Upload coverage
         uses: codecov/codecov-action@v5
         # skip the step for EarthBuild
         if: false
@@ -96,18 +102,21 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
-      - name: Test
+      -
+        name: Test
         run: |
           go test -coverprofile="coverage.txt" -covermode="atomic" ./...
           go tool cover -func="coverage.txt"
-      - name: Upload coverage
-        if: always()
+      -
+        name: Upload coverage
+        # skip the step for EarthBuild
+        if: false
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.txt
@@ -115,18 +124,27 @@ jobs:
           flags: unit,go-${{ matrix.go }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  test-freebsd-amd64:
-    # TODO(jhorsts): macOS latest (v10.15) used to contain vagrant but not anymore.
-    # The comment can be removed when the latest fsutil is merged into this repo.
-    if: false 
-    runs-on: macos-latest
-    timeout-minutes: 60
-    env:
-      VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
+  test-bsd-amd64:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - freebsd
+          - netbsd
+          - openbsd
     steps:
       -
+        name: Prepare
+        run: |
+          echo "VAGRANT_FILE=hack/Vagrantfile.${{ matrix.os }}" >> $GITHUB_ENV
+
+          # Sets semver Go version to be able to download tarball during vagrant setup
+          goVersion=$(curl --silent "https://go.dev/dl/?mode=json&include=all" | jq -r '.[].files[].version' | uniq | sed -e 's/go//' | sort -V | grep $GO_VERSION | tail -1)
+          echo "GO_VERSION=$goVersion" >> $GITHUB_ENV
+      -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Cache Vagrant boxes
         uses: actions/cache@v4
@@ -135,7 +153,8 @@ jobs:
           key: ${{ runner.os }}-vagrant-${{ matrix.os }}-${{ hashFiles(env.VAGRANT_FILE) }}
           restore-keys: |
             ${{ runner.os }}-vagrant-${{ matrix.os }}-
-      - name: Install vagrant
+      -
+        name: Install vagrant
         run: |
           set -x
           wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
@@ -146,20 +165,24 @@ jobs:
           sudo chmod a+rw /var/run/libvirt/libvirt-sock
           vagrant plugin install vagrant-libvirt
           vagrant --version
-      - name: Set up vagrant
+      -
+        name: Set up vagrant
         run: |
           ln -sf ${{ env.VAGRANT_FILE }} Vagrantfile
           vagrant up --no-tty
-      - name: Test
-        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+      -
+        name: Test
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 20
           max_attempts: 5
           command: |
             vagrant ssh -- "cd /vagrant; go test -buildvcs=false -coverprofile=coverage.txt -covermode=atomic ./..."
             vagrant ssh -c "sudo cat /vagrant/coverage.txt" > coverage.txt
-      - name: Upload coverage
-        if: always()
+      -
+        name: Upload coverage
+        # skip the step for EarthBuild
+        if: false
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.txt
