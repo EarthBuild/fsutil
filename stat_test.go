@@ -3,6 +3,8 @@ package fsutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +30,7 @@ func TestStat(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotZero(t, st.ModTime)
 	st.ModTime = 0
-	assert.Equal(t, &types.Stat{Path: "foo", Mode: 0644, Size_: 5}, st)
+	assert.Equal(t, &types.Stat{Path: "foo", Mode: 0644, Size: 5}, st)
 
 	st, err = Stat(filepath.Join(d, "zzz"))
 	assert.NoError(t, err)
@@ -40,17 +42,30 @@ func TestStat(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotZero(t, st.ModTime)
 	st.ModTime = 0
-	assert.Equal(t, &types.Stat{Path: "aa", Mode: 0644, Size_: 5}, st)
+	assert.Equal(t, &types.Stat{Path: "aa", Mode: 0644, Size: 5}, st)
 
 	st, err = Stat(filepath.Join(d, "zzz/bb/cc/dd"))
 	assert.NoError(t, err)
 	assert.NotZero(t, st.ModTime)
 	st.ModTime = 0
-	assert.Equal(t, &types.Stat{Path: "dd", Mode: uint32(os.ModeSymlink | 0777), Size_: 6, Linkname: "../../"}, st)
+	assert.Equal(t, &types.Stat{Path: "dd", Mode: uint32(os.ModeSymlink | 0777), Size: 6, Linkname: "../../"}, st)
 
 	st, err = Stat(filepath.Join(d, "sock"))
 	assert.NoError(t, err)
 	assert.NotZero(t, st.ModTime)
 	st.ModTime = 0
 	assert.Equal(t, &types.Stat{Path: "sock", Mode: 0755 /* ModeSocket not set */}, st)
+}
+
+func TestStat_SkipAppleXattrs(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("skipping test that requires darwin")
+	}
+
+	st, err := Stat("Dockerfile")
+	assert.NoError(t, err)
+
+	for key := range st.Xattrs {
+		assert.False(t, strings.HasPrefix(key, "com.apple."))
+	}
 }
