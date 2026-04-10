@@ -114,9 +114,6 @@ func (s *sender) run(ctx context.Context) error {
 }
 
 func (s *sender) updateProgress(size int, last bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.progressCurrent += size
 	if s.progressCb != nil {
 		s.progressCurrentMu.Lock()
 		defer s.progressCurrentMu.Unlock()

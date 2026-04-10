@@ -80,8 +80,6 @@ jobs:
       -
         name: Upload coverage
         uses: codecov/codecov-action@v5
-        # skip the step for EarthBuild
-        if: false
         with:
           directory: ${{ env.DESTDIR }}/coverage
           flags: unit,${{ matrix.mode }},go-${{ matrix.go }}
@@ -115,8 +113,7 @@ jobs:
           go tool cover -func="coverage.txt"
       -
         name: Upload coverage
-        # skip the step for EarthBuild
-        if: false
+        if: always()
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.txt
@@ -181,8 +178,7 @@ jobs:
             vagrant ssh -c "sudo cat /vagrant/coverage.txt" > coverage.txt
       -
         name: Upload coverage
-        # skip the step for EarthBuild
-        if: false
+        if: always()
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.txt
