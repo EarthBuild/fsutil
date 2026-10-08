@@ -4,16 +4,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DESTDIR: ./bin
+
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 8 */6 * *' # every 6 days
-  push:
-    branches:
-      - earthly-main
-      - gh_test_ci
   pull_request:
     branches:
-      - earthly-main
+      - master
+      - main
 
 jobs:
   validate:
@@ -27,13 +28,13 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
       -
         name: Run
-        uses: docker/bake-action@v3
+        uses: docker/bake-action@v4
         with:
           targets: ${{ matrix.target }}
 
@@ -47,13 +48,13 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
       -
         name: Run
-        uses: docker/bake-action@v3
+        uses: docker/bake-action@v4
         with:
           targets: ${{ matrix.target }}
 
@@ -61,66 +62,119 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go_version:
-          - "1.19"
+        go:
+          - "1.21"
           - "1.20"
+        mode:
+          - "root"
+          - "noroot"
     env:
-      GO_VERSION: ${{ matrix.go_version }}
+      GO_VERSION: ${{ matrix.go }}
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
       -
         name: Test
-        uses: docker/bake-action@v3
+        uses: docker/bake-action@v4
         with:
-          targets: test
+          targets: test-${{ matrix.mode }}
+      -
+        name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ${{ env.DESTDIR }}/coverage
+          flags: unit,${{ matrix.mode }},go-${{ matrix.go }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-  test-macos:
-    runs-on: macos-latest
+  test-os:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - macos-latest
+          - windows-latest
         go:
-          - "1.19"
+          - "1.21"
           - "1.20"
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
       -
         name: Test
         run: |
-          go test ./...
+          go test -coverprofile="coverage.txt" -covermode="atomic" ./...
+          go tool cover -func="coverage.txt"
+      -
+        name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.txt
+          env_vars: RUNNER_OS
+          flags: unit,go-${{ matrix.go }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   test-freebsd-amd64:
-    runs-on: macos-latest
-    timeout-minutes: 60
+    runs-on: macos-13
     env:
       VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Cache Vagrant boxes
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.vagrant.d/boxes
           key: ${{ runner.os }}-vagrant-${{ hashFiles('hack/Vagrantfile.freebsd13') }}
           restore-keys: |
             ${{ runner.os }}-vagrant-
       -
+        name: Install Vagrant and VirtualBox
+        run: |
+          set -x
+          brew tap hashicorp/tap
+          brew install hashicorp/tap/hashicorp-vagrant
+          brew install --cask virtualbox
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+      -
+        name: Check versions
+        run: |
+          set -x
+          vagrant --version
+          VBoxManage -v
+      -
         name: Set up vagrant
-        run: vagrant up
+        run: |
+          vagrant up --no-tty
       -
         name: Test
-        run: vagrant ssh -- "cd /vagrant; go test -buildvcs=false ./..."
+        uses: nick-fields/retry@7152eba30c6575329ac0576536151aca5a72780e  # v3.0.0
+        with:
+          timeout_minutes: 20
+          max_attempts: 5
+          command: |
+            vagrant ssh -- "cd /vagrant; go test -buildvcs=false -coverprofile=coverage.txt -covermode=atomic ./..."
+            vagrant ssh -c "sudo cat /vagrant/coverage.txt" > coverage.txt
+      -
+        name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.txt
+          flags: unit,freebsd
+          token: ${{ secrets.CODECOV_TOKEN }}
