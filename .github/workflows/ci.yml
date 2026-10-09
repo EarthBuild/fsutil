@@ -131,6 +131,11 @@ jobs:
         go:
           - "1.21"
           - "1.20"
+        exclude:
+          # Go 1.21 test binaries abort on current macOS runner images
+          # ("dyld: missing LC_UUID load command"); Go 1.20 still covers macOS.
+          - os: macos-latest
+            go: "1.21"
     steps:
       -
         name: Checkout
