@@ -156,50 +156,50 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   test-freebsd-amd64:
-    runs-on: macos-13
+    # macos-13 (and Vagrant/VirtualBox on it) is retired; run FreeBSD in a VM
+    # on Linux the way upstream tonistiigi/fsutil does.
+    runs-on: ubuntu-latest
     env:
-      VAGRANT_VAGRANTFILE: hack/Vagrantfile.freebsd13
+      GO_VERSION: "1.21"
     steps:
+      -
+        name: Prepare
+        shell: bash
+        run: |
+          goVersion=$(curl --fail --silent --show-error "https://go.dev/dl/?mode=json&include=all" | jq -er --arg version "go${GO_VERSION}." '[.[] | select(.stable and (.version | startswith($version)))][0].version')
+          echo "GO_VERSION=${goVersion#go}" >> "$GITHUB_ENV"
       -
         name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       -
-        name: Cache Vagrant boxes
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        name: Set up FreeBSD
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
-          path: ~/.vagrant.d/boxes
-          key: ${{ runner.os }}-vagrant-${{ hashFiles('hack/Vagrantfile.freebsd13') }}
-          restore-keys: |
-            ${{ runner.os }}-vagrant-
-      -
-        name: Install Vagrant and VirtualBox
-        run: |
-          set -x
-          brew tap hashicorp/tap
-          brew install hashicorp/tap/hashicorp-vagrant
-          brew install --cask virtualbox
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-      -
-        name: Check versions
-        run: |
-          set -x
-          vagrant --version
-          VBoxManage -v
-      -
-        name: Set up vagrant
-        run: |
-          vagrant up --no-tty
+          release: "14.5"
+          envs: GO_VERSION
+          custom-shell-name: bsd
+          prepare: |
+            set -ex
+            mkdir -p /var/tmp
+            chmod 1777 /var/tmp
+            archive="go${GO_VERSION}.freebsd-amd64.tar.gz"
+            fetch -o "/var/tmp/$archive" "https://go.dev/dl/$archive"
+            tar -C /var/tmp -xzf "/var/tmp/$archive"
+            pw useradd -n fsutil -m -s /bin/sh
       -
         name: Test
-        uses: nick-fields/retry@7152eba30c6575329ac0576536151aca5a72780e  # v3.0.0
-        with:
-          timeout_minutes: 20
-          max_attempts: 5
-          command: |
-            vagrant ssh -- "cd /vagrant; go test -buildvcs=false -coverprofile=coverage.txt -covermode=atomic ./..."
-            vagrant ssh -c "sudo cat /vagrant/coverage.txt" > coverage.txt
+        run: |
+          bsd /dev/stdin <<'EOF'
+          set -ex
+          chown -R fsutil "$GITHUB_WORKSPACE"
+          su - fsutil -c '
+            set -ex
+            cd "$1"
+            export TMPDIR=/var/tmp
+            export PATH="/var/tmp/go/bin:$PATH"
+            go test -buildvcs=false -coverprofile=coverage.txt -covermode=atomic ./...
+          ' sh "$GITHUB_WORKSPACE"
+          EOF
       -
         name: Upload coverage
         if: always()
