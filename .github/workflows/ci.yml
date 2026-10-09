@@ -11,10 +11,13 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 8 */6 * *' # every 6 days
-  pull_request:
+  push:
     branches:
-      - master
-      - main
+      - earthly-main
+      - gh_test_ci
+  # No branch filter, so PRs stacked on other PR branches
+  # (not just PRs into earthly-main) get CI too.
+  pull_request:
 
 jobs:
   validate:
